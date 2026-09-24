@@ -487,6 +487,25 @@ document.getElementById('add-btn').addEventListener('click', () => {
   addEntry(document.getElementById('log-input').value);
 });
 
+// Project title inline rename
+const titleEl = document.getElementById('project-title');
+titleEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); titleEl.blur(); }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    titleEl.textContent = activeId ? store[activeId]?.name ?? '' : '';
+    titleEl.blur();
+  }
+});
+titleEl.addEventListener('blur', () => {
+  if (!activeId) return;
+  const name = titleEl.textContent.trim();
+  if (!name) { titleEl.textContent = store[activeId].name; return; }
+  store[activeId].name = name;
+  saveStore(store);
+  drawSidebar();
+});
+
 // Save on page hide
 window.addEventListener('pagehide', persistCurrent);
 window.addEventListener('beforeunload', persistCurrent);
