@@ -63,7 +63,11 @@
 
       <!-- Header row -->
       <div class="flex items-center justify-between flex-wrap gap-2">
-        <h1 id="project-title" class="text-lg font-semibold tracking-tight truncate text-neutral-800"></h1>
+        <h1 id="project-title"
+          contenteditable="true"
+          spellcheck="false"
+          class="text-lg font-semibold tracking-tight truncate text-neutral-800 outline-none cursor-text rounded px-1 -mx-1 hover:bg-neutral-100 focus:bg-neutral-100 transition-colors min-w-[4rem]"
+        ></h1>
         <div id="toolbar" class="flex items-center gap-2 flex-wrap"></div>
       </div>
 
@@ -460,7 +464,9 @@ function drawList() {
 }
 
 function draw() {
-  document.getElementById('project-title').textContent = activeId ? store[activeId]?.name ?? '' : '';
+  const titleEl = document.getElementById('project-title');
+  const name = activeId ? store[activeId]?.name ?? '' : '';
+  if (titleEl !== document.activeElement) titleEl.textContent = name;
   drawToolbar();
   drawList();
   if (editing) {
