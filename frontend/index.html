@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Activity Log</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-optical-sizing: auto; }
+    .log-scroll { scrollbar-width: thin; scrollbar-color: #d4d4d4 transparent; }
+    .log-scroll::-webkit-scrollbar { width: 5px; }
+    .log-scroll::-webkit-scrollbar-thumb { background: #d4d4d4; border-radius: 9999px; }
+    .log-scroll::-webkit-scrollbar-track { background: transparent; }
+    .sidebar-scroll { scrollbar-width: thin; scrollbar-color: #e5e5e5 transparent; }
+    .sidebar-scroll::-webkit-scrollbar { width: 4px; }
+    .sidebar-scroll::-webkit-scrollbar-thumb { background: #e5e5e5; border-radius: 9999px; }
+  </style>
+</head>
+
+<body class="h-screen overflow-hidden bg-neutral-50 text-neutral-800 font-sans antialiased flex">
+
+  <!-- Sidebar -->
+  <aside class="w-56 shrink-0 border-r border-neutral-100 flex flex-col bg-white h-screen">
+    <div class="px-4 pt-5 pb-2">
+      <span class="text-[10px] font-semibold uppercase tracking-widest text-neutral-400 select-none">Projects</span>
+    </div>
+
+    <div class="px-3 pb-3">
+      <button
+        id="new-project-btn"
+        class="w-full flex items-center gap-2 text-sm font-medium px-3 py-1.5 rounded-md border border-dashed border-neutral-300 text-neutral-500 hover:border-neutral-400 hover:text-neutral-700 hover:bg-neutral-50 active:bg-neutral-100 transition-colors"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        New project
+      </button>
+    </div>
+
+    <div id="project-list" class="flex-1 overflow-y-auto sidebar-scroll px-2 pb-4 flex flex-col gap-0.5"></div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 min-w-0 flex flex-col h-screen overflow-hidden p-6">
+    <div class="w-full max-w-3xl mx-auto flex flex-col gap-4 h-full">
+
+      <!-- Header row -->
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <h1 id="project-title" class="text-lg font-semibold tracking-tight truncate text-neutral-800"></h1>
+        <div id="toolbar" class="flex items-center gap-2 flex-wrap"></div>
+      </div>
+
+      <!-- Card -->
+      <div class="border border-neutral-200 rounded-xl bg-white flex flex-col overflow-hidden shadow-sm flex-1 min-h-0">
+        <div id="log-list" class="flex-1 overflow-y-auto log-scroll min-h-0"></div>
+
+        <div class="border-t border-neutral-100 p-3 flex gap-2 shrink-0">
+          <input
+            id="log-input"
+            type="text"
+            placeholder="What did you do?"
+            autocomplete="off"
+            class="flex-1 text-sm px-3 py-1.5 rounded-lg border border-neutral-200 outline-none focus:ring-1 focus:ring-neutral-300 placeholder:text-neutral-300 font-sans bg-neutral-50"
+          />
+          <button
+            id="add-btn"
+            class="text-sm font-medium px-4 py-1.5 rounded-lg bg-neutral-700 text-white hover:bg-neutral-600 active:bg-neutral-700 transition-colors"
+          >Add</button>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+<script>
+/* ── Constants ──────────────────────────────────────────────────────────────── */
+const GENESIS = '0'.repeat(64);
+const STORAGE_KEY = 'activitylog_projects';
+const ACTIVE_KEY  = 'activitylog_active';
+
+/* ── Projects store ─────────────────────────────────────────────────────────── */
+function loadStore() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null') || {}; }
+  catch { return {}; }
+}
+function saveStore(store) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+}
+function loadActiveId() {
+  return localStorage.getItem(ACTIVE_KEY) || null;
+}
+function saveActiveId(id) {
+  localStorage.setItem(ACTIVE_KEY, id);
+}
+
+/* ── Per-project state ───────────────────────────────────────────────────────── */
+let store        = loadStore();       // { [id]: { id, name, createdAt, entries, lastHash } }
+let activeId     = null;
+let entries      = [];
+let lastHash     = GENESIS;
+let addQueue     = Promise.resolve();
+let status       = { kind: 'none' };
+let brokenAt     = null;
+let expanded     = new Set();
+let copied       = new Set();
+let editing      = false;
+let draft        = '';
+
+/* ── Project helpers ─────────────────────────────────────────────────────────── */
+function createProject(name) {
+  const id = crypto.randomUUID();
+  store[id] = { id, name, createdAt: new Date().toISOString(), entries: [], lastHash: GENESIS };
+  saveStore(store);
+  return id;
+}
+
+function switchProject(id) {
+  if (activeId) persistCurrent();   // save current before switching
+  activeId = id;
+  saveActiveId(id);
+  const p   = store[id];
+  entries   = p.entries ? [...p.entries] : [];
+  lastHash  = p.lastHash || GENESIS;
+  addQueue  = Promise.resolve();
+  status    = { kind: 'none' };
+  brokenAt  = null;
+  expanded  = new Set();
+  copied    = new Set();
+  editing   = false;
+  draft     = '';
+  draw();
+  drawSidebar();
+  document.getElementById('log-input').focus();
+}
+
+function persistCurrent() {
+  if (!activeId || !store[activeId]) return;
+  store[activeId].entries  = entries;
+  store[activeId].lastHash = lastHash;
+  saveStore(store);
+}
+
+function ensureDefault() {
+  // If no projects exist, create a default one
+  if (Object.keys(store).length === 0) {
+    const id = createProject('My first project');
+    return id;
+  }
+  // Try to restore last active
+  const saved = loadActiveId();
+  if (saved && store[saved]) return saved;
+  return Object.keys(store)[0];
+}
+
+function promptNewProject() {
+  const raw = window.prompt('Project name:', `Project ${Object.keys(store).length + 1}`);
+  if (!raw) return;
+  const name = raw.trim();
+  if (!name) return;
+  persistCurrent();
+  const id = createProject(name);
+  switchProject(id);
+}
+
+/* ── Crypto ─────────────────────────────────────────────────────────────────── */
+async function computeHash(prevHash, id, ts, text) {
+  const payload = JSON.stringify([prevHash, id, ts, text]);
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(payload));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function makeEntry(text, prevHash) {
+  const id = crypto.randomUUID();
+  const ts = new Date().toISOString();
+  return { id, ts, text, prevHash, hash: await computeHash(prevHash, id, ts, text) };
+}
+
+async function verifyAll(list) {
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    const expectedPrev = i === 0 ? GENESIS : list[i - 1].hash;
+    if (e.prevHash !== expectedPrev) return { ok: false, at: i };
+    const got = await computeHash(e.prevHash, e.id, e.ts, e.text);
+    if (got !== e.hash) return { ok: false, at: i };
+  }
+  return { ok: true };
+}
+
+/* ── Actions ────────────────────────────────────────────────────────────────── */
+function addEntry(raw) {
+  const text = raw.trim();
+  if (!text) return;
+  document.getElementById('log-input').value = '';
+  addQueue = addQueue.then(async () => {
+    const entry = await makeEntry(text, lastHash);
+    lastHash = entry.hash;
+    entries = [...entries, entry];
+    status = { kind: 'none' };
+    brokenAt = null;
+    persistCurrent();
+    draw();
+    requestAnimationFrame(() => {
+      const list = document.getElementById('log-list');
+      list.scrollTop = list.scrollHeight;
+      document.getElementById('log-input').focus();
+    });
+  });
+}
+
+async function onVerify() {
+  const res = await verifyAll(entries);
+  if (res.ok) { status = { kind: 'valid', count: entries.length }; brokenAt = null; }
+  else { status = { kind: 'broken', at: res.at }; brokenAt = res.at; }
+  draw();
+}
+
+async function onDownload() {
+  const generated = new Date().toISOString();
+  const { ok, at } = await verifyAll(entries);
+  const chainStatus = ok ? 'VALID' : `BROKEN at entry #${(at ?? 0) + 1}`;
+  const finalHash = entries.length ? entries[entries.length - 1].hash : 'N/A';
+  const sep = '-'.repeat(40);
+
+  const entryLines = entries.map(e => {
+    const ts = e.ts.replace('T', ' ').replace(/\.\d+Z$/, ' UTC').replace('Z', ' UTC');
+    return `[${ts}] ${e.text}\n    hash: ${e.hash}\n    prev: ${e.prevHash}`;
+  }).join('\n');
+
+  const content = [
+    'ACTIVITY REPORT',
+    `Generated: ${generated}`,
+    `Total entries: ${entries.length}`,
+    sep,
+    entryLines,
+    sep,
+    `Chain status: ${chainStatus}`,
+    `Final hash: ${finalHash}`,
+    '',
+  ].join('\n');
+
+  const now = new Date();
+  const p = n => String(n).padStart(2, '0');
+  const filename = `report-${now.getUTCFullYear()}-${p(now.getUTCMonth()+1)}-${p(now.getUTCDate())}_${p(now.getUTCHours())}-${p(now.getUTCMinutes())}-${p(now.getUTCSeconds())}.txt`;
+
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([content], { type: 'text/plain' })),
+    download: filename,
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function onTamper() {
+  if (!entries.length) return;
+  const i = Math.floor(Math.random() * entries.length);
+  entries = entries.map((e, idx) => idx === i ? { ...e, text: e.text + ' [TAMPERED]' } : e);
+  status = { kind: 'none' };
+  brokenAt = null;
+  draw();
+}
+
+function startEdit() {
+  draft = entries[entries.length - 1]?.text ?? '';
+  editing = true;
+  draw();
+  requestAnimationFrame(() => {
+    const inp = document.getElementById('edit-inp');
+    if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
+  });
+}
+
+function cancelEdit() { editing = false; draft = ''; draw(); }
+
+async function commitEdit() {
+  const text = draft.trim();
+  if (!text) { cancelEdit(); return; }
+  const last = entries[entries.length - 1];
+  const newHash = await computeHash(last.prevHash, last.id, last.ts, text);
+  entries = [...entries.slice(0, -1), { ...last, text, hash: newHash }];
+  lastHash = newHash;
+  status = { kind: 'none' };
+  brokenAt = null;
+  editing = false;
+  draft = '';
+  persistCurrent();
+  draw();
+}
+
+function toggleExpand(id) {
+  expanded.has(id) ? expanded.delete(id) : expanded.add(id);
+  draw();
+}
+
+async function copyHash(id) {
+  const e = entries.find(x => x.id === id);
+  if (!e) return;
+  await navigator.clipboard.writeText(`Hash: ${e.hash}\nPrev: ${e.prevHash}`);
+  copied.add(id);
+  draw();
+  setTimeout(() => { copied.delete(id); draw(); }, 1500);
+}
+
+/* ── Icons (Lucide SVGs) ─────────────────────────────────────────────────────── */
+const ic = {
+  shieldOk:    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>`,
+  shieldBad:   `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>`,
+  download:    `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="3" y2="15"/></svg>`,
+  flask:       `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 18.79A2 2 0 0 0 6.527 22h10.946a2 2 0 0 0 1.808-2.21l-5.069-8.367A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg>`,
+  fingerprint: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 17.5a14.5 14.5 0 0 0 4.56 5.5"/><path d="M20 10.75a9 9 0 0 1 .5 3.25"/><path d="M7.36 14a9 9 0 0 0 .64 4"/><path d="M12 6a7 7 0 0 0-7 7"/></svg>`,
+  copy:        `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`,
+  check12:     `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
+  check14:     `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`,
+  pencil:      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`,
+  x:           `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`,
+  folder:      `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
+};
+
+/* ── HTML helpers ────────────────────────────────────────────────────────────── */
+const esc = s => String(s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+
+const outlineBtn = (extra = '') =>
+  `inline-flex items-center gap-1.5 text-xs font-medium h-7 px-2.5 rounded-md border border-neutral-200 bg-white hover:bg-neutral-50 active:bg-neutral-100 transition-colors disabled:opacity-40 disabled:pointer-events-none ${extra}`;
+
+const ghostBtn = (extra = '') =>
+  `inline-flex h-6 w-6 items-center justify-center rounded-md hover:bg-neutral-100 active:bg-neutral-200 transition-colors ${extra}`;
+
+/* ── Sidebar render ──────────────────────────────────────────────────────────── */
+function drawSidebar() {
+  const list = document.getElementById('project-list');
+  const projects = Object.values(store).sort((a, b) => a.createdAt > b.createdAt ? 1 : -1);
+
+  if (!projects.length) {
+    list.innerHTML = '';
+    return;
+  }
+
+  list.innerHTML = projects.map(p => {
+    const isActive = p.id === activeId;
+    const count    = (p.entries || []).length;
+    return `
+      <button
+        onclick="switchProject('${p.id}')"
+        class="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors
+          ${isActive
+            ? 'bg-neutral-100 text-neutral-900'
+            : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'}"
+      >
+        <span class="${isActive ? 'text-neutral-500' : 'text-neutral-400'} shrink-0">${ic.folder}</span>
+        <span class="truncate flex-1 ${isActive ? 'font-semibold' : 'font-medium'}">${esc(p.name)}</span>
+        ${count > 0 ? `<span class="text-[11px] shrink-0 ${isActive ? 'text-neutral-500' : 'text-neutral-400'}">${count}</span>` : ''}
+      </button>`;
+  }).join('');
+}
+
+/* ── Main render ─────────────────────────────────────────────────────────────── */
+function drawToolbar() {
+  const has = entries.length > 0;
+  let badge = '';
+  if (status.kind === 'valid')
+    badge = `<span class="flex items-center gap-1 text-xs text-green-600 font-medium">${ic.shieldOk} Chain valid (${status.count} entries)</span>`;
+  if (status.kind === 'broken')
+    badge = `<span class="flex items-center gap-1 text-xs text-red-600 font-medium">${ic.shieldBad} Chain broken at entry #${status.at + 1}</span>`;
+
+  document.getElementById('toolbar').innerHTML = `
+    ${badge}
+    <button class="${outlineBtn()}" onclick="onVerify()" ${!has ? 'disabled' : ''}>
+      ${ic.shieldOk} Verify chain
+    </button>
+    <button class="${outlineBtn()}" onclick="onDownload()" ${!has ? 'disabled' : ''}>
+      ${ic.download} Download report
+    </button>
+  `;
+}
+
+function drawList() {
+  const el = document.getElementById('log-list');
+  if (!entries.length) {
+    el.innerHTML = `<p class="text-sm text-neutral-400 text-center py-8 select-none">No entries yet</p>`;
+    return;
+  }
+
+  const rows = entries.map((e, i) => {
+    const isLast   = i === entries.length - 1;
+    const isBroken = brokenAt !== null && i >= brokenAt;
+    const isExp    = expanded.has(e.id);
+    const isCopied = copied.has(e.id);
+
+    const time = new Date(e.ts).toLocaleTimeString('en-US', {
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+
+    const textCell = (isLast && editing)
+      ? `<input id="edit-inp" type="text" value="${esc(draft)}"
+           class="flex-1 min-w-0 text-sm bg-transparent border-b border-neutral-400 outline-none py-0.5 font-sans"
+           oninput="draft=this.value"
+           onkeydown="if(event.key==='Enter'){event.preventDefault();commitEdit()}else if(event.key==='Escape'){event.preventDefault();cancelEdit()}"
+         />`
+      : `<span class="text-sm break-words">${esc(e.text)}</span>`;
+
+    let actions = '';
+    if (isLast && editing) {
+      actions = `
+        <button class="${ghostBtn('text-green-500')}" onclick="commitEdit()" title="Save">${ic.check14}</button>
+        <button class="${ghostBtn('text-neutral-400')}" onclick="cancelEdit()" title="Cancel">${ic.x}</button>
+      `;
+    } else if (isLast) {
+      actions = `<button class="${ghostBtn('text-neutral-400')}" onclick="startEdit()" title="Edit last entry">${ic.pencil}</button>`;
+    }
+
+    const hashPanel = isExp ? `
+      <div class="mt-1 rounded bg-neutral-50 border border-neutral-100 px-3 py-2 text-xs font-mono text-neutral-500">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0">
+            <p class="break-all"><span class="text-neutral-400 select-none">Hash: </span>${e.hash}</p>
+            <p class="break-all mt-1"><span class="text-neutral-400 select-none">Prev: </span>${e.prevHash}</p>
+          </div>
+          <button class="${ghostBtn(isCopied ? 'text-green-500' : 'text-neutral-400')} shrink-0 mt-0.5"
+            onclick="copyHash('${e.id}')" title="${isCopied ? 'Copied!' : 'Copy hashes'}">
+            ${isCopied ? ic.check12 : ic.copy}
+          </button>
+        </div>
+      </div>` : '';
+
+    return `
+      <div class="border-l-2 pl-3 py-1 ${isBroken ? 'border-red-500' : 'border-transparent'}">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-3 min-w-0 flex-1">
+            <span class="font-mono text-xs text-neutral-500 shrink-0">${time}</span>
+            ${textCell}
+          </div>
+          <div class="flex items-center gap-0.5 shrink-0">
+            ${actions}
+            <button class="${ghostBtn('text-neutral-400')}" onclick="toggleExpand('${e.id}')" title="Show hash">${ic.fingerprint}</button>
+          </div>
+        </div>
+        ${hashPanel}
+      </div>`;
+  });
+
+  el.innerHTML = `<div class="flex flex-col gap-1 p-4">${rows.join('')}</div>`;
+}
+
+function draw() {
+  document.getElementById('project-title').textContent = activeId ? store[activeId]?.name ?? '' : '';
+  drawToolbar();
+  drawList();
+  if (editing) {
+    requestAnimationFrame(() => {
+      const inp = document.getElementById('edit-inp');
+      if (inp) { inp.focus(); inp.selectionStart = inp.selectionEnd = inp.value.length; }
+    });
+  }
+}
+
+/* ── Bootstrap ───────────────────────────────────────────────────────────────── */
+document.getElementById('new-project-btn').addEventListener('click', promptNewProject);
+
+document.getElementById('log-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addEntry(e.target.value);
+});
+document.getElementById('add-btn').addEventListener('click', () => {
+  addEntry(document.getElementById('log-input').value);
+});
+
+// Save on page hide
+window.addEventListener('pagehide', persistCurrent);
+window.addEventListener('beforeunload', persistCurrent);
+
+// Init
+const startId = ensureDefault();
+switchProject(startId);
+</script>
+</body>
+</html>
