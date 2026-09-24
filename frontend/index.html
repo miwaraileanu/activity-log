@@ -334,6 +334,7 @@ const ic = {
   pencil:      `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>`,
   x:           `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`,
   folder:      `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
+  trash:       `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>`,
 };
 
 /* ── HTML helpers ────────────────────────────────────────────────────────────── */
@@ -361,17 +362,24 @@ function drawSidebar() {
     const isActive = p.id === activeId;
     const count    = (p.entries || []).length;
     return `
-      <button
-        onclick="switchProject('${p.id}')"
-        class="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors
-          ${isActive
-            ? 'bg-neutral-100 text-neutral-900'
-            : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'}"
-      >
-        <span class="${isActive ? 'text-neutral-500' : 'text-neutral-400'} shrink-0">${ic.folder}</span>
-        <span class="truncate flex-1 ${isActive ? 'font-semibold' : 'font-medium'}">${esc(p.name)}</span>
-        ${count > 0 ? `<span class="text-[11px] shrink-0 ${isActive ? 'text-neutral-500' : 'text-neutral-400'}">${count}</span>` : ''}
-      </button>`;
+      <div class="group relative flex items-center">
+        <button
+          onclick="switchProject('${p.id}')"
+          class="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors
+            ${isActive
+              ? 'bg-neutral-100 text-neutral-900'
+              : 'text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700'}"
+        >
+          <span class="${isActive ? 'text-neutral-500' : 'text-neutral-400'} shrink-0">${ic.folder}</span>
+          <span class="truncate flex-1 ${isActive ? 'font-semibold' : 'font-medium'}">${esc(p.name)}</span>
+          ${count > 0 ? `<span class="text-[11px] shrink-0 ${isActive ? 'text-neutral-500' : 'text-neutral-400'} group-hover:hidden">${count}</span>` : ''}
+        </button>
+        <button
+          onclick="deleteProject('${p.id}')"
+          title="Delete project"
+          class="absolute right-1 opacity-0 group-hover:opacity-100 inline-flex h-5 w-5 items-center justify-center rounded text-neutral-400 hover:text-red-500 hover:bg-red-50 transition-all"
+        >${ic.trash}</button>
+      </div>`;
   }).join('');
 }
 
