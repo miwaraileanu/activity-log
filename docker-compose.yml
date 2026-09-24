@@ -35,7 +35,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-activitylog}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-activitylog}
       REDIS_URL: redis://redis:6379/0
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5500}
+      CORS_ORIGINS: '["http://localhost:5500"]'
     ports:
       - "8000:8000"
     depends_on:
