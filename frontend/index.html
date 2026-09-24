@@ -173,6 +173,25 @@ function ensureDefault() {
   return Object.keys(store)[0];
 }
 
+function deleteProject(id) {
+  const name = store[id]?.name ?? 'this project';
+  if (!window.confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  delete store[id];
+  saveStore(store);
+  if (activeId === id) {
+    activeId = null;
+    const remaining = Object.keys(store);
+    if (remaining.length === 0) {
+      const newId = createProject('My first project');
+      switchProject(newId);
+    } else {
+      switchProject(remaining[0]);
+    }
+  } else {
+    drawSidebar();
+  }
+}
+
 function promptNewProject() {
   const raw = window.prompt('Project name:', `Project ${Object.keys(store).length + 1}`);
   if (!raw) return;
